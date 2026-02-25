@@ -169,6 +169,16 @@ function buildVolumeMounts(
     readonly: true,
   });
 
+  // Mount Tencent Mail credentials (read-only) if available
+  const tencentMailDir = path.join(homeDir, '.tencent-mail');
+  if (fs.existsSync(tencentMailDir)) {
+    mounts.push({
+      hostPath: tencentMailDir,
+      containerPath: '/home/node/.tencent-mail',
+      readonly: true,
+    });
+  }
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(

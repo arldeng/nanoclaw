@@ -75,6 +75,14 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS processed_emails (
+      uid INTEGER NOT NULL,
+      mailbox TEXT NOT NULL DEFAULT 'INBOX',
+      message_id TEXT,
+      sender TEXT NOT NULL,
+      processed_at TEXT NOT NULL,
+      PRIMARY KEY (uid, mailbox)
+    );
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -585,6 +593,34 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Processed email accessors ---
+
+export function isEmailProcessed(uid: number, mailbox: string = 'INBOX'): boolean {
+  const row = db
+    .prepare('SELECT 1 FROM processed_emails WHERE uid = ? AND mailbox = ?')
+    .get(uid, mailbox);
+  return !!row;
+}
+
+export function markEmailProcessed(
+  uid: number,
+  sender: string,
+  messageId?: string,
+  mailbox: string = 'INBOX',
+): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO processed_emails (uid, mailbox, message_id, sender, processed_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(uid, mailbox, messageId || null, sender, new Date().toISOString());
+}
+
+export function getLastProcessedUid(mailbox: string = 'INBOX'): number {
+  const row = db
+    .prepare('SELECT MAX(uid) as max_uid FROM processed_emails WHERE mailbox = ?')
+    .get(mailbox) as { max_uid: number | null } | undefined;
+  return row?.max_uid || 0;
 }
 
 // --- JSON migration ---

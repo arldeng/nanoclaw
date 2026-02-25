@@ -13,6 +13,9 @@ const envConfig = readEnvFile([
   'FEISHU_VERIFICATION_TOKEN',
   'FEISHU_ENCRYPT_KEY',
   'FEISHU_ONLY',
+  'TENCENT_MAIL_ENABLED',
+  'TENCENT_MAIL_CONFIG_PATH',
+  'TENCENT_MAIL_POLL_INTERVAL',
 ]);
 
 export const ASSISTANT_NAME =
@@ -83,3 +86,14 @@ export const FEISHU_ENCRYPT_KEY =
   process.env.FEISHU_ENCRYPT_KEY || envConfig.FEISHU_ENCRYPT_KEY || '';
 export const FEISHU_ONLY =
   (process.env.FEISHU_ONLY || envConfig.FEISHU_ONLY) === 'true';
+
+// Tencent Mail configuration
+export const TENCENT_MAIL_ENABLED =
+  (process.env.TENCENT_MAIL_ENABLED || envConfig.TENCENT_MAIL_ENABLED) === 'true';
+export const TENCENT_MAIL_CONFIG_PATH =
+  process.env.TENCENT_MAIL_CONFIG_PATH || envConfig.TENCENT_MAIL_CONFIG_PATH ||
+  path.join(HOME_DIR, '.tencent-mail', 'config.json');
+export const TENCENT_MAIL_POLL_INTERVAL = parseInt(
+  process.env.TENCENT_MAIL_POLL_INTERVAL || envConfig.TENCENT_MAIL_POLL_INTERVAL || '60000',
+  10,
+);

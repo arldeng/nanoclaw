@@ -229,3 +229,15 @@ When scheduling tasks for other groups, use the `target_group_jid` parameter wit
 - `schedule_task(prompt: "...", schedule_type: "cron", schedule_value: "0 9 * * 1", target_group_jid: "120363336345536173@g.us")`
 
 The task will run in that group's context with access to their files and memory.
+
+---
+
+## Email (Tencent Enterprise Mail)
+
+You have access to the enterprise email account via MCP tools (when `tencentmail` MCP is available):
+
+- `mcp__tencentmail__search_emails(limit: 20, since: "2026-02-20")` — list recent emails
+- `mcp__tencentmail__get_email(uid: 123)` — read full email content
+- `mcp__tencentmail__send_email(to: "user@example.com", subject: "...", body: "...", in_reply_to: "<message-id>")` — send or reply
+
+Email JIDs use the format `email:sender@domain.com`. When an email arrives, it appears as a message with `[邮件]` prefix containing the subject and body.

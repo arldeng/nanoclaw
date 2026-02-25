@@ -12,10 +12,14 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  TENCENT_MAIL_CONFIG_PATH,
+  TENCENT_MAIL_ENABLED,
+  TENCENT_MAIL_POLL_INTERVAL,
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import { FeishuChannel } from './channels/feishu.js';
+import { TencentMailChannel } from './channels/tencent-mail.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -450,6 +454,16 @@ async function main(): Promise<void> {
     );
     channels.push(feishu);
     await feishu.connect();
+  }
+
+  if (TENCENT_MAIL_ENABLED) {
+    const tencentMail = new TencentMailChannel(
+      TENCENT_MAIL_CONFIG_PATH,
+      TENCENT_MAIL_POLL_INTERVAL,
+      channelOpts,
+    );
+    channels.push(tencentMail);
+    await tencentMail.connect();
   }
 
   // Start subsystems (independently of connection handler)
