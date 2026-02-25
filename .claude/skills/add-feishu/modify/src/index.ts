@@ -1,3 +1,4 @@
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -12,9 +13,12 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_ONLY,
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
+import { TelegramChannel } from './channels/telegram.js';
 import { FeishuChannel } from './channels/feishu.js';
 import {
   ContainerOutput,
@@ -22,7 +26,6 @@ import {
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
-import { cleanupOrphans, ensureContainerRuntimeRunning } from './container-runtime.js';
 import {
   getAllChats,
   getAllRegisteredGroups,
@@ -405,8 +408,34 @@ function recoverPendingMessages(): void {
 }
 
 function ensureContainerSystemRunning(): void {
-  ensureContainerRuntimeRunning();
-  cleanupOrphans();
+  try {
+    execSync('docker info', { stdio: 'pipe' });
+    logger.debug('Docker is running');
+  } catch (err) {
+    logger.error({ err }, 'Docker is not running');
+    console.error('\n  FATAL: Docker is not running.');
+    console.error('  Start Docker Desktop (macOS) or: sudo systemctl start docker (Linux)\n');
+    throw new Error('Docker is required but not running');
+  }
+
+  // Kill and clean up orphaned NanoClaw containers from previous runs
+  try {
+    const output = execSync(
+      'docker ps --filter name=nanoclaw- --format "{{.Names}}"',
+      { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
+    );
+    const orphans = output.trim().split('\n').filter(Boolean);
+    for (const name of orphans) {
+      try {
+        execSync(`docker stop ${name}`, { stdio: 'pipe' });
+      } catch { /* already stopped */ }
+    }
+    if (orphans.length > 0) {
+      logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to clean up orphaned containers');
+  }
 }
 
 async function main(): Promise<void> {
@@ -434,10 +463,16 @@ async function main(): Promise<void> {
   };
 
   // Create and connect channels
-  if (!FEISHU_ONLY) {
+  if (!TELEGRAM_ONLY && !FEISHU_ONLY) {
     whatsapp = new WhatsAppChannel(channelOpts);
     channels.push(whatsapp);
     await whatsapp.connect();
+  }
+
+  if (TELEGRAM_BOT_TOKEN) {
+    const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
+    channels.push(telegram);
+    await telegram.connect();
   }
 
   if (FEISHU_APP_ID && FEISHU_APP_SECRET) {

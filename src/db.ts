@@ -429,6 +429,14 @@ export function getDueTasks(): ScheduledTask[] {
     .all(now) as ScheduledTask[];
 }
 
+/**
+ * Clear next_run immediately when a task is dispatched to prevent
+ * re-queuing on subsequent scheduler polls before updateTaskAfterRun runs.
+ */
+export function markTaskDispatched(id: string): void {
+  db.prepare(`UPDATE scheduled_tasks SET next_run = NULL WHERE id = ?`).run(id);
+}
+
 export function updateTaskAfterRun(
   id: string,
   nextRun: string | null,

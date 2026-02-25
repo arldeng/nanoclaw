@@ -16,6 +16,7 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendImage: (jid: string, imagePath: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroupMetadata: (force: boolean) => Promise<void>;
@@ -71,18 +72,28 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
+              if (data.type === 'message' && data.chatJid && (data.text || data.imagePath)) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text);
-                  logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'IPC message sent',
-                  );
+                  if (data.imagePath) {
+                    let hostImagePath = data.imagePath;
+                    const groupDir = path.join(DATA_DIR, '..', 'groups', sourceGroup);
+                    hostImagePath = hostImagePath
+                      .replace(/^\/workspace\/group\//, groupDir + '/')
+                      .replace(/^\/workspace\/project\//, path.join(DATA_DIR, '..') + '/');
+                    await deps.sendImage(data.chatJid, hostImagePath, data.caption);
+                  } else {
+                    await deps.sendMessage(data.chatJid, data.text);
+                   
+                  }
+                   logger.info(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'IPC message sent',
+                    );
                 } else {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },

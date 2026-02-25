@@ -16,6 +16,7 @@ import {
   getDueTasks,
   getTaskById,
   logTaskRun,
+  markTaskDispatched,
   updateTaskAfterRun,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
@@ -201,8 +202,12 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
           continue;
         }
 
+        // Clear next_run immediately to prevent re-queuing on the next poll
+        // before updateTaskAfterRun has a chance to run.
+        markTaskDispatched(currentTask.id);
+
         deps.queue.enqueueTask(
-          currentTask.chat_jid,
+          `${currentTask.chat_jid}__task__${currentTask.id}`,
           currentTask.id,
           () => runTask(currentTask, deps),
         );

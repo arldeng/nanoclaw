@@ -18,6 +18,24 @@ Your output is sent to the user or group.
 
 You also have `mcp__nanoclaw__send_message` which sends a message immediately while you're still working. This is useful when you want to acknowledge a request before starting longer work.
 
+### Sending Images
+
+To take a screenshot and send it:
+
+```bash
+# Step 1: save screenshot to /workspace/group/ (NEVER omit the path)
+agent-browser screenshot /workspace/group/screenshot.png
+```
+
+Then call the MCP tool:
+```
+mcp__nanoclaw__send_image(image_path="/workspace/group/screenshot.png", caption="Optional caption")
+```
+
+- Always specify the full path for `agent-browser screenshot` — without a path it saves to a temp dir and is lost
+- `image_path` must be under `/workspace/group/`
+- Use `send_image` MCP tool, not a Bash echo command
+
 ### Internal thoughts
 
 If part of your output is internal reasoning rather than something for the user, wrap it in `<internal>` tags:

@@ -63,6 +63,29 @@ server.tool(
 );
 
 server.tool(
+  'send_image',
+  "Send an image file to the user or group. The image must be saved to /workspace/group/ first. Use agent-browser screenshot /workspace/group/filename.png to capture screenshots.",
+  {
+    image_path: z.string().describe('Absolute path to the image inside the container, e.g. /workspace/group/screenshot.png'),
+    caption: z.string().optional().describe('Optional caption to send with the image'),
+  },
+  async (args) => {
+    const data: Record<string, string | undefined> = {
+      type: 'message',
+      chatJid,
+      imagePath: args.image_path,
+      caption: args.caption || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: 'Image sent.' }] };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools.
 
