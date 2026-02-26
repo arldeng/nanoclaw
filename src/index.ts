@@ -87,6 +87,14 @@ function saveState(): void {
   );
 }
 
+function getMainGroup(): RegisteredGroup | undefined {
+  return Object.values(registeredGroups).find(g => g.folder === MAIN_GROUP_FOLDER);
+}
+
+function getMainGroupJid(): string | undefined {
+  return Object.entries(registeredGroups).find(([, g]) => g.folder === MAIN_GROUP_FOLDER)?.[0];
+}
+
 function registerGroup(jid: string, group: RegisteredGroup): void {
   registeredGroups[jid] = group;
   setRegisteredGroup(jid, group);
@@ -129,7 +137,7 @@ export function _setRegisteredGroups(groups: Record<string, RegisteredGroup>): v
  * Called by the GroupQueue when it's this group's turn.
  */
 async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const group = registeredGroups[chatJid];
+  const group = registeredGroups[chatJid] ?? (chatJid.startsWith('email:') ? getMainGroup() : undefined);
   if (!group) return true;
 
   const channel = findChannel(channels, chatJid);
@@ -190,7 +198,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await channel.sendMessage(chatJid, text);
+        // For email messages, forward agent reply to the main group's Feishu channel
+        const replyJid = chatJid.startsWith('email:') ? getMainGroupJid() ?? chatJid : chatJid;
+        const replyChannel = findChannel(channels, replyJid);
+        if (replyChannel) {
+          await replyChannel.sendMessage(replyJid, text);
+        }
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -313,7 +326,12 @@ async function startMessageLoop(): Promise<void> {
   while (true) {
     try {
       const jids = Object.keys(registeredGroups);
-      const { messages, newTimestamp } = getNewMessages(jids, lastTimestamp, ASSISTANT_NAME);
+      // Also poll email JIDs that aren't explicitly registered (routed to main)
+      const emailJids = getAllChats()
+        .filter(c => c.jid.startsWith('email:') && !registeredGroups[c.jid])
+        .map(c => c.jid);
+      const allJids = [...jids, ...emailJids];
+      const { messages, newTimestamp } = getNewMessages(allJids, lastTimestamp, ASSISTANT_NAME);
 
       if (messages.length > 0) {
         logger.info({ count: messages.length }, 'New messages');
@@ -334,7 +352,7 @@ async function startMessageLoop(): Promise<void> {
         }
 
         for (const [chatJid, groupMessages] of messagesByGroup) {
-          const group = registeredGroups[chatJid];
+          const group = registeredGroups[chatJid] ?? (chatJid.startsWith('email:') ? getMainGroup() : undefined);
           if (!group) continue;
 
           const channel = findChannel(channels, chatJid);

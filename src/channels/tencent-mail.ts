@@ -5,7 +5,6 @@ import nodemailer from 'nodemailer';
 
 import { ASSISTANT_NAME } from '../config.js';
 import {
-  getLastProcessedUid,
   isEmailProcessed,
   markEmailProcessed,
 } from '../db.js';
@@ -73,6 +72,7 @@ export class TencentMailChannel implements Channel {
   }
 
   private async pollInbox(): Promise<void> {
+    logger.info('Tencent Mail polling inbox...');
     let client: ImapFlow | null = null;
     try {
       client = new ImapFlow({
@@ -87,19 +87,24 @@ export class TencentMailChannel implements Channel {
       const lock = await client.getMailboxLock('INBOX');
 
       try {
-        const lastUid = getLastProcessedUid('INBOX');
-        // Fetch messages with UID greater than last processed
-        const range = lastUid > 0 ? `${lastUid + 1}:*` : '1:*';
+        // Use SEARCH for UNSEEN messages — more reliable than UID range on Tencent IMAP
+        const result = await client.search({ seen: false }, { uid: true });
+        const uids = Array.isArray(result) ? result : [];
+        logger.info({ unseenCount: uids.length }, 'Tencent Mail poll');
 
-        for await (const msg of client.fetch(range, {
-          uid: true,
-          envelope: true,
-          source: true,
-        })) {
-          if (msg.uid <= lastUid) continue;
-          if (isEmailProcessed(msg.uid, 'INBOX')) continue;
-
-          await this.processEmail(msg);
+        if (uids.length > 0) {
+          const uidRange = uids.join(',');
+          for await (const msg of client.fetch(uidRange, {
+            uid: true,
+            envelope: true,
+            source: true,
+          }, { uid: true })) {
+            const from = msg.envelope?.from?.[0]?.address || 'unknown';
+            const alreadyProcessed = isEmailProcessed(msg.uid, 'INBOX');
+            logger.info({ uid: msg.uid, from, alreadyProcessed }, 'Tencent Mail fetched msg');
+            if (alreadyProcessed) continue;
+            await this.processEmail(msg as any);
+          }
         }
       } finally {
         lock.release();
@@ -111,14 +116,14 @@ export class TencentMailChannel implements Channel {
       try { await client?.logout(); } catch { /* ignore */ }
     }
   }
-  private async processEmail(msg: { uid: number; envelope: any; source: Buffer }): Promise<void> {
+  private async processEmail(msg: { uid: number; envelope?: any; source: Buffer }): Promise<void> {
     try {
       const parsed: ParsedMail = await simpleParser(msg.source);
       const from = msg.envelope?.from?.[0];
       const senderEmail = from?.address || 'unknown';
       const senderName = from?.name || senderEmail;
       const subject = parsed.subject || '(no subject)';
-      const body = parsed.text || parsed.html?.replace(/<[^>]+>/g, '') || '';
+      const body = parsed.text || (parsed.html ? parsed.html.replace(/<[^>]+>/g, '') : '') || '';
       const messageId = parsed.messageId || `uid-${msg.uid}`;
       const date = parsed.date || new Date();
 
@@ -134,14 +139,6 @@ export class TencentMailChannel implements Channel {
 
       // Store chat metadata
       this.opts.onChatMetadata(chatJid, timestamp, senderName, 'tencent-mail', false);
-
-      // Only deliver for registered groups
-      const group = this.opts.registeredGroups()[chatJid];
-      if (!group) {
-        logger.debug({ chatJid, senderEmail, subject }, 'Email from unregistered sender — JID logged for registration');
-        markEmailProcessed(msg.uid, senderEmail, messageId, 'INBOX');
-        return;
-      }
 
       this.opts.onMessage(chatJid, {
         id: messageId,

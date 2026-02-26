@@ -59,9 +59,10 @@ server.tool(
           const searchCriteria: any = {};
           if (args.since) searchCriteria.since = new Date(args.since);
 
-          const uids = await client.search(searchCriteria, { uid: true });
+          const result = await client.search(searchCriteria, { uid: true });
           // Take the last N UIDs (most recent)
-          const recentUids = uids.slice(-args.limit);
+          const allUids = Array.isArray(result) ? result : [];
+          const recentUids = allUids.slice(-args.limit);
           if (recentUids.length === 0) return '没有找到邮件。';
 
           const range = recentUids.join(',');
@@ -113,13 +114,13 @@ server.tool(
             source: true,
           })) {
             found = true;
-            const parsed = await simpleParser(msg.source);
+            const parsed = await simpleParser(msg.source as any) as any;
             const from = msg.envelope?.from?.[0];
             const sender = from?.name ? `${from.name} <${from.address}>` : from?.address || 'unknown';
             const to = msg.envelope?.to?.map((t: any) => t.address).join(', ') || '';
             const subject = parsed.subject || '(no subject)';
             const date = parsed.date?.toISOString() || '';
-            const body = parsed.text || parsed.html?.replace(/<[^>]+>/g, '') || '(empty)';
+            const body = parsed.text || (parsed.html ? parsed.html.replace(/<[^>]+>/g, '') : '') || '(empty)';
             const messageId = parsed.messageId || '';
 
             output = [
