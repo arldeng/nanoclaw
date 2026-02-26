@@ -512,6 +512,12 @@ async function main(): Promise<void> {
       if (channel.sendImage) return channel.sendImage(jid, imagePath, caption);
       return channel.sendMessage(jid, caption || `[Image: ${imagePath}]`);
     },
+    sendFile: (jid, filePath, caption) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (channel.sendFile) return channel.sendFile(jid, filePath, caption);
+      return channel.sendMessage(jid, caption || `[File: ${filePath}]`);
+    },
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroupMetadata: (force) => whatsapp?.syncGroupMetadata(force) ?? Promise.resolve(),

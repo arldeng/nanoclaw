@@ -17,6 +17,7 @@ import { RegisteredGroup } from './types.js';
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
   sendImage: (jid: string, imagePath: string, caption?: string) => Promise<void>;
+  sendFile: (jid: string, filePath: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroupMetadata: (force: boolean) => Promise<void>;
@@ -72,7 +73,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && (data.text || data.imagePath)) {
+              if (data.type === 'message' && data.chatJid && (data.text || data.imagePath || data.filePath)) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
@@ -86,6 +87,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       .replace(/^\/workspace\/group\//, groupDir + '/')
                       .replace(/^\/workspace\/project\//, path.join(DATA_DIR, '..') + '/');
                     await deps.sendImage(data.chatJid, hostImagePath, data.caption);
+                  } else if (data.filePath) {
+                    let hostFilePath = data.filePath;
+                    const groupDir = path.join(DATA_DIR, '..', 'groups', sourceGroup);
+                    hostFilePath = hostFilePath
+                      .replace(/^\/workspace\/group\//, groupDir + '/')
+                      .replace(/^\/workspace\/project\//, path.join(DATA_DIR, '..') + '/');
+                    await deps.sendFile(data.chatJid, hostFilePath, data.caption);
                   } else {
                     await deps.sendMessage(data.chatJid, data.text);
                    

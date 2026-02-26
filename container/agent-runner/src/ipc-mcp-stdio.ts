@@ -86,6 +86,29 @@ server.tool(
 );
 
 server.tool(
+  'send_file',
+  "Send a file to the user or group. The file must exist at the given path inside the container (e.g. /workspace/group/license.lic).",
+  {
+    file_path: z.string().describe('Absolute path to the file inside the container, e.g. /workspace/group/license.lic'),
+    caption: z.string().optional().describe('Optional caption to send with the file'),
+  },
+  async (args) => {
+    const data: Record<string, string | undefined> = {
+      type: 'message',
+      chatJid,
+      filePath: args.file_path,
+      caption: args.caption || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: 'File sent.' }] };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools.
 

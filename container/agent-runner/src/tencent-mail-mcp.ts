@@ -5,6 +5,7 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
@@ -123,7 +124,7 @@ server.tool(
             const body = parsed.text || (parsed.html ? parsed.html.replace(/<[^>]+>/g, '') : '') || '(empty)';
             const messageId = parsed.messageId || '';
 
-            output = [
+            const parts = [
               `From: ${sender}`,
               `To: ${to}`,
               `Date: ${date}`,
@@ -131,7 +132,17 @@ server.tool(
               `Message-ID: ${messageId}`,
               `---`,
               body.slice(0, 10000),
-            ].join('\n');
+            ];
+
+            if (parsed.attachments && parsed.attachments.length > 0) {
+              const attList = parsed.attachments.map((a: any) =>
+                `${a.filename || 'unnamed'} (${a.size || 0} bytes)`
+              ).join(', ');
+              parts.push(`---`);
+              parts.push(`Attachments: ${attList}`);
+            }
+
+            output = parts.join('\n');
           }
 
           return found ? output : `未找到 UID ${args.uid} 的邮件。`;
@@ -156,6 +167,7 @@ server.tool(
     to: z.string().describe('Recipient email address'),
     subject: z.string().describe('Email subject'),
     body: z.string().describe('Email body (plain text)'),
+    cc: z.string().optional().describe('CC recipients (comma-separated email addresses)'),
     in_reply_to: z.string().optional().describe('Message-ID to reply to (for threading)'),
   },
   async (args) => {
@@ -174,6 +186,10 @@ server.tool(
         text: args.body,
       };
 
+      if (args.cc) {
+        mailOptions.cc = args.cc;
+      }
+
       if (args.in_reply_to) {
         mailOptions.inReplyTo = args.in_reply_to;
         mailOptions.references = args.in_reply_to;
@@ -182,10 +198,66 @@ server.tool(
       await transport.sendMail(mailOptions);
       transport.close();
 
-      return { content: [{ type: 'text' as const, text: `邮件已发送至 ${args.to}` }] };
+      return { content: [{ type: 'text' as const, text: `邮件已发送至 ${args.to}${args.cc ? ` (CC: ${args.cc})` : ''}` }] };
     } catch (err) {
       return {
         content: [{ type: 'text' as const, text: `发送邮件失败: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'download_attachment',
+  'Download an attachment from an email by UID and filename. Saves to the specified path.',
+  {
+    uid: z.number().describe('The UID of the email containing the attachment'),
+    filename: z.string().describe('The attachment filename to download'),
+    save_path: z.string().default('/workspace/group/').describe('Directory to save the file (default: /workspace/group/)'),
+  },
+  async (args) => {
+    try {
+      const result = await withImap(async (client) => {
+        const lock = await client.getMailboxLock('INBOX');
+        try {
+          for await (const msg of client.fetch(String(args.uid), {
+            uid: true,
+            source: true,
+          })) {
+            const parsed = await simpleParser(msg.source as any) as any;
+            if (!parsed.attachments || parsed.attachments.length === 0) {
+              return { error: `邮件 UID ${args.uid} 没有附件。` };
+            }
+
+            const attachment = parsed.attachments.find(
+              (a: any) => a.filename === args.filename
+            );
+            if (!attachment) {
+              const available = parsed.attachments.map((a: any) => a.filename || 'unnamed').join(', ');
+              return { error: `未找到附件 "${args.filename}"。可用附件: ${available}` };
+            }
+
+            const savePath = args.save_path.endsWith('/')
+              ? path.join(args.save_path, args.filename)
+              : args.save_path;
+            fs.mkdirSync(path.dirname(savePath), { recursive: true });
+            fs.writeFileSync(savePath, attachment.content);
+            return { path: savePath, size: attachment.size || attachment.content.length };
+          }
+          return { error: `未找到 UID ${args.uid} 的邮件。` };
+        } finally {
+          lock.release();
+        }
+      });
+
+      if ('error' in result) {
+        return { content: [{ type: 'text' as const, text: result.error }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: `附件已保存: ${result.path} (${result.size} bytes)` }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `下载附件失败: ${err instanceof Error ? err.message : String(err)}` }],
         isError: true,
       };
     }

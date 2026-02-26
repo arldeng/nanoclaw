@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 
 import * as Lark from '@larksuiteoapi/node-sdk';
 
@@ -350,6 +351,45 @@ export class FeishuChannel implements Channel {
       logger.info({ jid, imagePath }, 'Feishu image sent');
     } catch (err) {
       logger.error({ jid, imagePath, err }, 'Failed to send Feishu image');
+    }
+  }
+
+  async sendFile(jid: string, filePath: string, caption?: string): Promise<void> {
+    if (!this.client) {
+      logger.warn('Feishu client not initialized');
+      return;
+    }
+    try {
+      const chatId = jid.replace(/^fs:/, '');
+      const fileName = path.basename(filePath);
+
+      // Upload file to get file_key
+      const uploadRes = await this.client.im.file.create({
+        data: {
+          file_type: 'stream',
+          file_name: fileName,
+          file: fs.createReadStream(filePath),
+        },
+      });
+      const fileKey = (uploadRes as any)?.file_key || (uploadRes as any)?.data?.file_key;
+      if (!fileKey) throw new Error('No file_key returned from upload');
+
+      await this.client.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: chatId,
+          msg_type: 'file',
+          content: JSON.stringify({ file_key: fileKey }),
+        },
+      });
+
+      if (caption) {
+        await this.sendMessage(jid, caption);
+      }
+
+      logger.info({ jid, filePath }, 'Feishu file sent');
+    } catch (err) {
+      logger.error({ jid, filePath, err }, 'Failed to send Feishu file');
     }
   }
 }

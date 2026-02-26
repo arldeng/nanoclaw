@@ -89,6 +89,8 @@ export interface Channel {
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: send image. Channels that support it implement it.
   sendImage?(jid: string, imagePath: string, caption?: string): Promise<void>;
+  // Optional: send file. Channels that support it implement it.
+  sendFile?(jid: string, filePath: string, caption?: string): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages
