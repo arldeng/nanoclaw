@@ -249,33 +249,85 @@ You have access to the enterprise email account via MCP tools (when `tencentmail
 
 Email JIDs use the format `email:sender@domain.com`. When an email arrives, it appears as a message with `[邮件]` prefix containing the subject and body.
 
-### /lic 指令 — 高云 License 申请
+### /lic 指令 — License 申请
 
-当用户发送 `/lic` 时，触发 license 申请流程。用户消息格式示例：
+当用户发送 `/lic` 时，触发 license 申请流程。支持两种软件类型：
+
+1. **高云云源软件**：使用 `/lic gowin` 或 `/lic g`
+2. **RDS软件**：使用 `/lic rds` 或 `/lic r`
+3. **默认**：仅 `/lic` 视为高云云源软件
+
+用户消息格式示例：
 ```
+# 高云云源软件
 /lic 东方电子 1个 mac: 4c-10-d5-5f-5a-b3
-/lic 长春莫尔 2个 mac: 40-C2-BA-54-FB-5E, 74-56-3C-86-82-3C
+/lic gowin 长春莫尔 2个 mac: 40-C2-BA-54-FB-5E, 74-56-3C-86-82-3C
+/lic g 南京测试 1个 mac: 00-11-22-33-44-55
+
+# RDS软件
+/lic rds 上海研发 1个 mac: AA-BB-CC-DD-EE-FF
+/lic r 北京测试 3个 mac: 11-22-33-44-55-66, 22-33-44-55-66-77, 33-44-55-66-77-88
 ```
 
-从消息中提取：公司名称、申请数量、MAC 地址列表。
+从消息中提取：软件类型（默认"gowin"）、公司名称、申请数量、MAC 地址列表。
 
 **第一步：发送申请邮件**
 
+根据软件类型选择邮件主题和正文：
+
+- **高云云源软件**（类型为 "gowin"、"g" 或空）：
+  - 主题：`"license申请（{公司名称}）"`
+  - 正文：`"{公司名称}申请{数量}个云源软件license，mac如下："`
+
+- **RDS软件**（类型为 "rds" 或 "r"）：
+  - 主题：`"RDS license申请（{公司名称}）"`
+  - 正文：`"{公司名称}申请{数量}个RDS软件license，mac如下："`
+
+根据提取的软件类型、公司名称、数量、MAC地址，构建邮件：
+
 ```
+// 确定软件类型
+let softwareType = "gowin"; // 从消息中提取，默认"gowin"
+// 可能的取值: "gowin", "g", "rds", "r", 或空字符串
+
+// 构建主题和正文
+let subject, bodyPrefix;
+if (softwareType === "rds" || softwareType === "r") {
+  subject = `RDS license申请（${companyName}）`;
+  bodyPrefix = `${companyName}申请${quantity}个RDS软件license，mac如下：`;
+} else {
+  // 默认处理高云云源软件 (包括 "gowin", "g", 空字符串)
+  subject = `license申请（${companyName}）`;
+  bodyPrefix = `${companyName}申请${quantity}个云源软件license，mac如下：`;
+}
+
+// 格式化MAC地址（每行一个，带序号）
+let macList = "";
+macAddresses.forEach((mac, index) => {
+  macList += `       ${index + 1}. ${mac}\n`;
+});
+
+// 发送邮件
 mcp__tencentmail__send_email(
   to: "strato_license@gowinsemi.com",
-  subject: "license申请（{公司名称}）",
+  subject: subject,
   cc: "ningtai@gowinsemi.com,paul@gowinsemi.com,fangbin@quncetech.com,yonglai.sun@gowinsemi.com",
-  body: "您好，\n       {公司名称}申请{数量}个云源软件license，mac如下：\n\n       {MAC地址，每行一个，带序号}\n\n\n    谢谢"
+  body: `您好，\n       ${bodyPrefix}\n\n${macList}\n    谢谢`
 )
 ```
 
-发送成功后回复用户"license 申请邮件已发送，等待高云回复"。
+发送成功后回复用户"license 申请邮件已发送，等待回复"。
 
 **第二步：收到回复后转发附件**
 
 当收到来自 `strato_license@gowinsemi.com` 的回复邮件（通常包含 .lic 附件）时：
+
 1. `mcp__tencentmail__get_email` 查看邮件，确认有附件
-2. `mcp__tencentmail__download_attachment` 下载 .lic 文件到 `/workspace/group/`
-3. `mcp__nanoclaw__send_file` 将文件发送到群里
-4. 回复用户"license 已收到并发送"
+2. 根据邮件主题判断 license 类型：
+   - 主题包含 "RDS" → RDS软件license
+   - 否则 → 高云云源软件license
+3. `mcp__tencentmail__download_attachment` 下载 .lic 文件到 `/workspace/group/`
+4. `mcp__nanoclaw__send_file` 将文件发送到群里
+5. 根据 license 类型回复用户：
+   - RDS软件：回复"RDS license 已收到并发送"
+   - 高云云源软件：回复"license 已收到并发送"
