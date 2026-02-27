@@ -502,21 +502,24 @@ async function main(): Promise<void> {
   });
   startIpcWatcher({
     sendMessage: (jid, text) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid, text);
+      const resolvedJid = jid.startsWith('email:') ? getMainGroupJid() ?? jid : jid;
+      const channel = findChannel(channels, resolvedJid);
+      if (!channel) throw new Error(`No channel for JID: ${resolvedJid}`);
+      return channel.sendMessage(resolvedJid, text);
     },
     sendImage: (jid, imagePath, caption) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      if (channel.sendImage) return channel.sendImage(jid, imagePath, caption);
-      return channel.sendMessage(jid, caption || `[Image: ${imagePath}]`);
+      const resolvedJid = jid.startsWith('email:') ? getMainGroupJid() ?? jid : jid;
+      const channel = findChannel(channels, resolvedJid);
+      if (!channel) throw new Error(`No channel for JID: ${resolvedJid}`);
+      if (channel.sendImage) return channel.sendImage(resolvedJid, imagePath, caption);
+      return channel.sendMessage(resolvedJid, caption || `[Image: ${imagePath}]`);
     },
     sendFile: (jid, filePath, caption) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      if (channel.sendFile) return channel.sendFile(jid, filePath, caption);
-      return channel.sendMessage(jid, caption || `[File: ${filePath}]`);
+      const resolvedJid = jid.startsWith('email:') ? getMainGroupJid() ?? jid : jid;
+      const channel = findChannel(channels, resolvedJid);
+      if (!channel) throw new Error(`No channel for JID: ${resolvedJid}`);
+      if (channel.sendFile) return channel.sendFile(resolvedJid, filePath, caption);
+      return channel.sendMessage(resolvedJid, caption || `[File: ${filePath}]`);
     },
     registeredGroups: () => registeredGroups,
     registerGroup,

@@ -86,14 +86,32 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     hostImagePath = hostImagePath
                       .replace(/^\/workspace\/group\//, groupDir + '/')
                       .replace(/^\/workspace\/project\//, path.join(DATA_DIR, '..') + '/');
-                    await deps.sendImage(data.chatJid, hostImagePath, data.caption);
+                    hostImagePath = path.resolve(hostImagePath);
+                    const allowedPrefixes = [
+                      path.resolve(path.join(DATA_DIR, '..', 'groups', sourceGroup)),
+                      path.resolve(path.join(DATA_DIR, '..')),
+                    ];
+                    if (!allowedPrefixes.some((p) => hostImagePath.startsWith(p + '/'))) {
+                      logger.warn({ hostImagePath, sourceGroup }, 'IPC image path traversal blocked');
+                    } else {
+                      await deps.sendImage(data.chatJid, hostImagePath, data.caption);
+                    }
                   } else if (data.filePath) {
                     let hostFilePath = data.filePath;
                     const groupDir = path.join(DATA_DIR, '..', 'groups', sourceGroup);
                     hostFilePath = hostFilePath
                       .replace(/^\/workspace\/group\//, groupDir + '/')
                       .replace(/^\/workspace\/project\//, path.join(DATA_DIR, '..') + '/');
-                    await deps.sendFile(data.chatJid, hostFilePath, data.caption);
+                    hostFilePath = path.resolve(hostFilePath);
+                    const allowedPrefixes = [
+                      path.resolve(path.join(DATA_DIR, '..', 'groups', sourceGroup)),
+                      path.resolve(path.join(DATA_DIR, '..')),
+                    ];
+                    if (!allowedPrefixes.some((p) => hostFilePath.startsWith(p + '/'))) {
+                      logger.warn({ hostFilePath, sourceGroup }, 'IPC file path traversal blocked');
+                    } else {
+                      await deps.sendFile(data.chatJid, hostFilePath, data.caption);
+                    }
                   } else {
                     await deps.sendMessage(data.chatJid, data.text);
                    

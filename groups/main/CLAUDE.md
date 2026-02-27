@@ -32,9 +32,15 @@ Then call the MCP tool:
 mcp__nanoclaw__send_image(image_path="/workspace/group/screenshot.png", caption="Optional caption")
 ```
 
+To send a file (PDF, document, etc.) to the user:
+```
+mcp__nanoclaw__send_file(file_path="/workspace/group/license.lic", caption="Optional caption")
+```
+
 - Always specify the full path for `agent-browser screenshot` — without a path it saves to a temp dir and is lost
 - `image_path` must be under `/workspace/group/`
-- Use `send_image` MCP tool, not a Bash echo command
+- `file_path` must be under `/workspace/group/`
+- Use `send_image` / `send_file` MCP tools, not Bash echo commands
 
 ### Internal thoughts
 
@@ -237,7 +243,39 @@ The task will run in that group's context with access to their files and memory.
 You have access to the enterprise email account via MCP tools (when `tencentmail` MCP is available):
 
 - `mcp__tencentmail__search_emails(limit: 20, since: "2026-02-20")` — list recent emails
-- `mcp__tencentmail__get_email(uid: 123)` — read full email content
-- `mcp__tencentmail__send_email(to: "user@example.com", subject: "...", body: "...", in_reply_to: "<message-id>")` — send or reply
+- `mcp__tencentmail__get_email(uid: 123)` — read full email content (includes CC and attachment list)
+- `mcp__tencentmail__send_email(to: "user@example.com", subject: "...", body: "...", cc: "a@b.com,c@d.com", in_reply_to: "<message-id>")` — send or reply, supports CC
+- `mcp__tencentmail__download_attachment(uid: 123, filename: "file.pdf", save_path: "/workspace/group/")` — download email attachment to local path
 
 Email JIDs use the format `email:sender@domain.com`. When an email arrives, it appears as a message with `[邮件]` prefix containing the subject and body.
+
+### /lic 指令 — 高云 License 申请
+
+当用户发送 `/lic` 时，触发 license 申请流程。用户消息格式示例：
+```
+/lic 东方电子 1个 mac: 4c-10-d5-5f-5a-b3
+/lic 长春莫尔 2个 mac: 40-C2-BA-54-FB-5E, 74-56-3C-86-82-3C
+```
+
+从消息中提取：公司名称、申请数量、MAC 地址列表。
+
+**第一步：发送申请邮件**
+
+```
+mcp__tencentmail__send_email(
+  to: "strato_license@gowinsemi.com",
+  subject: "license申请（{公司名称}）",
+  cc: "ningtai@gowinsemi.com,paul@gowinsemi.com,fangbin@quncetech.com,yonglai.sun@gowinsemi.com",
+  body: "您好，\n       {公司名称}申请{数量}个云源软件license，mac如下：\n\n       {MAC地址，每行一个，带序号}\n\n\n    谢谢"
+)
+```
+
+发送成功后回复用户"license 申请邮件已发送，等待高云回复"。
+
+**第二步：收到回复后转发附件**
+
+当收到来自 `strato_license@gowinsemi.com` 的回复邮件（通常包含 .lic 附件）时：
+1. `mcp__tencentmail__get_email` 查看邮件，确认有附件
+2. `mcp__tencentmail__download_attachment` 下载 .lic 文件到 `/workspace/group/`
+3. `mcp__nanoclaw__send_file` 将文件发送到群里
+4. 回复用户"license 已收到并发送"

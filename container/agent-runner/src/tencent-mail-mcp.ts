@@ -29,20 +29,49 @@ const server = new McpServer({
   version: '1.0.0',
 });
 
-async function withImap<T>(fn: (client: ImapFlow) => Promise<T>): Promise<T> {
-  const client = new ImapFlow({
-    host: config.imap.host,
-    port: config.imap.port,
-    secure: config.imap.secure,
-    auth: { user: config.email, pass: config.password },
-    logger: false,
-  });
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.logout().catch(() => {});
+function isRetryable(err: any): boolean {
+  if (err.message === 'IMAP_TIMEOUT' || err.code === 'ECONNRESET') return true;
+  const msg = String(err.message || '').toLowerCase();
+  if (msg.includes('connection closed') || msg.includes('connection lost') || msg.includes('socket closed') || msg.includes('econnrefused')) return true;
+  return false;
+}
+
+async function withImap<T>(fn: (client: ImapFlow) => Promise<T>, retries = 3, timeoutMs = 30000): Promise<T> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const client = new ImapFlow({
+      host: config.imap.host,
+      port: config.imap.port,
+      secure: config.imap.secure,
+      auth: { user: config.email, pass: config.password },
+      logger: false,
+    });
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const result = await Promise.race([
+        (async () => {
+          await client.connect();
+          return await fn(client);
+        })(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('IMAP_TIMEOUT')), timeoutMs);
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
+      return result;
+    } catch (err: any) {
+      if (timer) clearTimeout(timer);
+      client.close();
+      await client.logout().catch(() => {});
+      if (attempt < retries && isRetryable(err)) {
+        await new Promise(r => setTimeout(r, 3000 * attempt));
+        continue;
+      }
+      throw err;
+    } finally {
+      await client.logout().catch(() => {});
+    }
   }
+  throw new Error('withImap: unreachable');
 }
 
 server.tool(
@@ -72,7 +101,7 @@ server.tool(
           for await (const msg of client.fetch(range, {
             uid: true,
             envelope: true,
-          })) {
+          }, { uid: true })) {
             const from = msg.envelope?.from?.[0];
             const sender = from?.name ? `${from.name} <${from.address}>` : from?.address || 'unknown';
             const subject = msg.envelope?.subject || '(no subject)';
@@ -113,7 +142,7 @@ server.tool(
             uid: true,
             envelope: true,
             source: true,
-          })) {
+          }, { uid: true })) {
             found = true;
             const parsed = await simpleParser(msg.source as any) as any;
             const from = msg.envelope?.from?.[0];
@@ -127,12 +156,13 @@ server.tool(
             const parts = [
               `From: ${sender}`,
               `To: ${to}`,
+              parsed.cc ? `CC: ${(Array.isArray(parsed.cc) ? parsed.cc : [parsed.cc]).map((c: any) => c.text || c.address || String(c)).join(', ')}` : null,
               `Date: ${date}`,
               `Subject: ${subject}`,
               `Message-ID: ${messageId}`,
               `---`,
               body.slice(0, 10000),
-            ];
+            ].filter(Boolean);
 
             if (parsed.attachments && parsed.attachments.length > 0) {
               const attList = parsed.attachments.map((a: any) =>
@@ -218,38 +248,69 @@ server.tool(
   },
   async (args) => {
     try {
-      const result = await withImap(async (client) => {
+      const result = await withImap<{ error: string } | { path: string; size: number }>(async (client) => {
         const lock = await client.getMailboxLock('INBOX');
         try {
+          // Step 1: fetch bodyStructure to find the attachment MIME part
+          let bodyStructure: any = null;
           for await (const msg of client.fetch(String(args.uid), {
             uid: true,
-            source: true,
-          })) {
-            const parsed = await simpleParser(msg.source as any) as any;
-            if (!parsed.attachments || parsed.attachments.length === 0) {
-              return { error: `邮件 UID ${args.uid} 没有附件。` };
-            }
-
-            const attachment = parsed.attachments.find(
-              (a: any) => a.filename === args.filename
-            );
-            if (!attachment) {
-              const available = parsed.attachments.map((a: any) => a.filename || 'unnamed').join(', ');
-              return { error: `未找到附件 "${args.filename}"。可用附件: ${available}` };
-            }
-
-            const savePath = args.save_path.endsWith('/')
-              ? path.join(args.save_path, args.filename)
-              : args.save_path;
-            fs.mkdirSync(path.dirname(savePath), { recursive: true });
-            fs.writeFileSync(savePath, attachment.content);
-            return { path: savePath, size: attachment.size || attachment.content.length };
+            bodyStructure: true,
+          }, { uid: true })) {
+            bodyStructure = msg.bodyStructure;
           }
-          return { error: `未找到 UID ${args.uid} 的邮件。` };
+          if (!bodyStructure) {
+            return { error: `未找到 UID ${args.uid} 的邮件。` };
+          }
+
+          // Recursively find attachment parts
+          function findParts(node: any, parts: any[] = []): any[] {
+            if (node.disposition === 'attachment' || (node.filename && node.type !== 'multipart')) {
+              parts.push(node);
+            }
+            if (node.childNodes) {
+              for (const child of node.childNodes) findParts(child, parts);
+            }
+            return parts;
+          }
+          const attachmentParts = findParts(bodyStructure);
+          if (attachmentParts.length === 0) {
+            return { error: `邮件 UID ${args.uid} 没有附件。` };
+          }
+
+          const target = attachmentParts.find((p: any) => {
+            const name = p.filename || p.dispositionParameters?.filename || p.parameters?.name || '';
+            return name === args.filename;
+          });
+          if (!target) {
+            const available = attachmentParts.map((p: any) =>
+              p.filename || p.dispositionParameters?.filename || p.parameters?.name || 'unnamed'
+            ).join(', ');
+            return { error: `未找到附件 "${args.filename}"。可用附件: ${available}` };
+          }
+
+          // Step 2: download only the target part
+          const { content } = await client.download(String(args.uid), target.part, { uid: true });
+          const chunks: Buffer[] = [];
+          for await (const chunk of content) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          }
+          const data = Buffer.concat(chunks);
+
+          const savePath = args.save_path.endsWith('/')
+            ? path.join(args.save_path, args.filename)
+            : args.save_path;
+          const resolved = path.resolve(savePath);
+          if (!resolved.startsWith('/workspace/')) {
+            return { error: `路径不合法，必须在 /workspace/ 下: ${resolved}` };
+          }
+          fs.mkdirSync(path.dirname(resolved), { recursive: true });
+          fs.writeFileSync(resolved, data);
+          return { path: resolved, size: data.length };
         } finally {
           lock.release();
         }
-      });
+      }, 3, 60000);
 
       if ('error' in result) {
         return { content: [{ type: 'text' as const, text: result.error }], isError: true };
