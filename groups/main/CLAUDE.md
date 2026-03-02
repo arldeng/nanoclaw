@@ -331,3 +331,203 @@ mcp__tencentmail__send_email(
 5. 根据 license 类型回复用户：
    - RDS软件：回复"RDS license 已收到并发送"
    - 高云云源软件：回复"license 已收到并发送"
+
+### /bus 指令 — 公交监控
+
+当用户发送 `/bus 上班` 或 `/bus 下班` 时，启动公交监控任务。任务每分钟查询公交API，当公交车到达指定站点时发送通知，并在30分钟后超时停止。
+
+用户消息格式示例：
+```
+/bus 上班
+/bus 下班
+```
+
+**指令处理逻辑**：
+
+1. 解析消息内容，识别指令类型：
+   - `/bus 上班`：监控下班路线（下行），目标inorder=29
+   - `/bus 下班`：监控上班路线（上行），目标inorder=11
+
+2. 检查是否已有正在运行的公交监控任务（通过list_tasks查找包含"公交监控任务"的任务），如果存在则取消旧任务。
+
+3. 记录当前时间作为任务开始时间，设置30分钟超时。
+
+4. 根据指令类型创建对应的定时任务：
+
+```javascript
+// 伪代码逻辑 - 在实际提示词中实现
+if (message === "/bus 上班") {
+  const apiUrl = "http://api1.jiaodong.net:81/ytbus/public/api.php/v10/bus/getOnlineBus?linename=68路&upordown=下行";
+  const targetInorder = 29;
+  const taskStartTime = Date.now(); // 记录任务开始时间
+  const timeoutMs = 30 * 60 * 1000; // 30分钟超时
+
+  await schedule_task({
+    prompt: `
+[公交监控任务 - 上班路线]
+任务ID: ${生成唯一标识}
+任务开始时间: ${taskStartTime}
+超时时间: ${timeoutMs}毫秒 (30分钟)
+API URL: ${apiUrl}
+目标inorder值: ${targetInorder}
+
+执行步骤：
+1. 首先获取当前任务ID：使用list_tasks查找匹配当前任务特征的任务（相同的API URL和开始时间）
+2. 计算当前时间与任务开始时间的差值
+3. 如果超过${timeoutMs}毫秒（30分钟）：
+   - 发送消息："公交监控已超时30分钟，停止查询"
+   - 使用cancel_task取消本任务
+   - 退出
+4. 使用WebFetch查询API：${apiUrl}
+5. 解析响应JSON，检查data数组中每个item的inorder字段
+6. 如果有item.inorder == ${targetInorder}：
+   - 发送消息："68路汽车还有4站到达，马上出发吧"
+   - 使用cancel_task取消本任务
+   - 退出
+7. 如果没有达到条件，任务正常结束，等待下次执行
+
+注意事项：
+- 如果WebFetch失败，记录错误但不取消任务
+- 确保使用send_message发送通知
+- 使用cancel_task时需要任务ID
+    `,
+    schedule_type: "interval",
+    schedule_value: "60000", // 每分钟执行一次
+    context_mode: "isolated", // 独立任务，不需要对话上下文
+  });
+} else if (message === "/bus 下班") {
+  const apiUrl = "http://api1.jiaodong.net:81/ytbus/public/api.php/v10/bus/getOnlineBus?linename=68路&upordown=上行";
+  const targetInorder = 11;
+  // 其余逻辑同上
+}
+```
+
+5. 创建任务后回复用户："已启动公交监控，将在公交车到达指定站点时通知您（最多监控30分钟）"。
+
+**任务执行逻辑（在任务提示词中实现）**：
+
+1. **获取当前任务ID**：使用`list_tasks`工具查找匹配当前任务特征的任务。通过检查任务提示词是否包含相同的API URL和开始时间来识别。
+
+2. **超时检查**：每次执行时计算当前时间与任务开始时间的差值，如果超过30分钟则发送超时消息并取消任务。
+
+3. **API查询**：使用WebFetch工具查询公交API，解析JSON响应。
+
+4. **条件检查**：检查响应中的`data`数组，查找任意item的`inorder`字段等于目标值。
+
+5. **发送通知**：条件满足时使用`send_message`发送通知消息。
+
+6. **任务取消**：达到条件或超时后使用`cancel_task`取消任务。
+
+**超时机制**：
+- 任务开始时间记录在提示词中
+- 每次执行检查是否已超过30分钟
+- 超时后发送通知并取消任务
+- 避免任务无限期运行
+
+**错误处理**：
+- API调用失败：记录错误，任务继续执行（下次重试）
+- 消息发送失败：重试一次，记录日志
+- 任务ID获取失败：尝试通过特征匹配查找任务
+
+### 具体实现示例
+
+以下是处理 `/bus` 指令的具体代码示例，agent应按照此逻辑执行：
+
+```javascript
+// 当收到消息时检查是否为/bus指令
+if (messageContent.startsWith('/bus')) {
+  // 发送确认消息
+  await mcp__nanoclaw__send_message("正在启动公交监控...");
+
+  // 检查是否已有公交监控任务
+  const allTasks = await list_tasks();
+  const existingBusTasks = allTasks.filter(task =>
+    task.prompt && task.prompt.includes('公交监控任务')
+  );
+
+  // 取消所有现有的公交监控任务
+  for (const task of existingBusTasks) {
+    await cancel_task(task.id);
+  }
+
+  // 解析指令类型
+  let apiUrl, targetInorder, description;
+  const taskStartTime = Date.now();
+  const timeoutMs = 30 * 60 * 1000; // 30分钟超时
+
+  if (messageContent.includes('上班')) {
+    apiUrl = "http://api1.jiaodong.net:81/ytbus/public/api.php/v10/bus/getOnlineBus?linename=68路&upordown=下行";
+    targetInorder = 29;
+    description = "上班路线（下行）";
+  } else if (messageContent.includes('下班')) {
+    apiUrl = "http://api1.jiaodong.net:81/ytbus/public/api.php/v10/bus/getOnlineBus?linename=68路&upordown=上行";
+    targetInorder = 11;
+    description = "下班路线（上行）";
+  } else {
+    await mcp__nanoclaw__send_message("指令格式错误，请使用：/bus 上班 或 /bus 下班");
+    return;
+  }
+
+  // 创建唯一任务标识
+  const taskId = `bus_monitor_${Date.now()}`;
+
+  // 创建定时任务
+  const scheduleResult = await schedule_task({
+    prompt: `
+[公交监控任务 - ${description}]
+任务标识: ${taskId}
+任务开始时间: ${taskStartTime}
+超时时间: ${timeoutMs}毫秒 (30分钟)
+API URL: ${apiUrl}
+目标inorder值: ${targetInorder}
+当前群组JID: ${currentChatJid}
+
+执行步骤：
+1. 首先获取当前时间：const currentTime = Date.now();
+2. 计算已过去时间：const elapsedTime = currentTime - ${taskStartTime};
+3. 检查是否超时（${timeoutMs}毫秒 = 30分钟）：
+   if (elapsedTime > ${timeoutMs}) {
+     await mcp__nanoclaw__send_message("公交监控已超时30分钟，停止查询");
+     // 需要先获取任务ID才能取消
+     const allTasks = await list_tasks();
+     const thisTask = allTasks.find(t => t.prompt && t.prompt.includes('${taskId}'));
+     if (thisTask) {
+       await cancel_task(thisTask.id);
+     }
+     return;
+   }
+4. 使用WebFetch查询API：
+   const apiResult = await WebFetch("${apiUrl}", "获取公交实时位置信息");
+5. 解析响应JSON：
+   try {
+     const data = JSON.parse(apiResult);
+     if (data && data.data && Array.isArray(data.data)) {
+       // 检查每个item的inorder字段
+       const found = data.data.some(item => item.inorder == ${targetInorder});
+       if (found) {
+         await mcp__nanoclaw__send_message("68路汽车还有4站到达，马上出发吧");
+         // 取消任务
+         const allTasks = await list_tasks();
+         const thisTask = allTasks.find(t => t.prompt && t.prompt.includes('${taskId}'));
+         if (thisTask) {
+           await cancel_task(thisTask.id);
+         }
+         return;
+       }
+     }
+   } catch (error) {
+     // API解析错误，记录但继续执行
+     console.error("API解析错误:", error);
+   }
+6. 如果没有达到条件，任务正常结束，等待下次执行。
+
+注意：每次执行都要重复步骤1-6。
+    `,
+    schedule_type: "interval",
+    schedule_value: "60000", // 每分钟执行一次
+    context_mode: "isolated",
+  });
+
+  await mcp__nanoclaw__send_message(`已启动公交监控（${description}），将在公交车到达指定站点时通知您（最多监控30分钟）`);
+}
+```
